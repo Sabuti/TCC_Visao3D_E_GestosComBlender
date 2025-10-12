@@ -13,7 +13,6 @@ def send_command(cmd_name): # payload=None, value=None
     msg = {"cmd": cmd_name} # "payload": payload or {}, "value": value
     data = json.dumps(msg).encode("utf-8")
     sock.sendto(data, (BLENDER_IP, BLENDER_PORT))
-# ==========================================
 
 # Inicialização do MediaPipe
 mp_hands = mp.solutions.hands
@@ -42,18 +41,6 @@ def eh_mindinho(landmarks): #Verifica se só o mindinho está levantado (apenas 
     # Apenas mindinho levantado
     return (not polegar and not indicador and not medio and not anelar and mindinho)
 
-def eh_dedao(landmarks): # Verifica se só o dedão está levantado (apenas ele)
-
-    # Pontos dos dedos
-    polegar = landmarks[4].x < landmarks[3].x if landmarks[4].x < landmarks[0].x else landmarks[4].x > landmarks[3].x
-    indicador = landmarks[8].y < landmarks[6].y
-    medio = landmarks[12].y < landmarks[10].y
-    anelar = landmarks[16].y < landmarks[14].y
-    mindinho = landmarks[20].y < landmarks[18].y
-    
-    # Apenas dedão levantado
-    return (polegar and not indicador and not medio and not anelar and not mindinho)
-
 def eh_indicador_medio(landmarks, face_center): # Verifica se indicador e anelar estão levantados (apenas eles) e aponta direção
     
     # Verifica quais dedos estão levantados
@@ -76,7 +63,7 @@ def eh_indicador_medio(landmarks, face_center): # Verifica se indicador e anelar
         limiar = 0.05
         
         if abs(dx) > abs(dy):
-            return "Direita" if dx > limiar else "Esquerda" if dx < -limiar else "Centro"
+            return "Esquerda" if dx > limiar else "Direita" if dx < -limiar else "Centro"
         else:
             return "Baixo" if dy > limiar else "Cima" if dy < -limiar else "Centro"
     
@@ -167,26 +154,12 @@ while True:
             handedness = result_hands.multi_handedness[i].classification[0].label
             landmarks = handLms.landmark
             gesture = None
-            
-            # Identifica se é mão esquerda ou direita
-            #if result_hands.multi_handedness:
-            #    handedness = result_hands.multi_handedness[i]
-            #    lado = handedness.classification[0].label
-            #    cv2.putText(img, f"{lado}", 
-            #               (int(handLms.landmark[0].x * img.shape[1]), 
-            #               int(handLms.landmark[0].y * img.shape[0]) - 20),
-            #              cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
             # --- Testes de gestos ---
             y_offset = 30
             if eh_mindinho(landmarks):
                 cv2.putText(img, f"M{handedness}: Mindinho", (10, 100 + y_offset*i), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-                gesture = "mudar_modo_camera"
-
-            elif eh_dedao(landmarks):
-                cv2.putText(img, f"M{handedness}: Dedao", (10, 100 + y_offset*i), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 200, 0), 2)
                 gesture = "mudar_gravidade"
 
             direcao = eh_indicador_medio(landmarks, face_center)
@@ -204,11 +177,12 @@ while True:
                            (10, 160 + y_offset*i), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (200, 0, 255), 2)
                 # Desenha ponto na ponta do indicador
                 cv2.circle(img, (x_pos, y_pos), 8, (200, 0, 255), -1)
-                gesture = "faz_algo"
+                #gesture = "faz_algo" # Implementar ação se necessário
 
             if mao_aberta(landmarks):
                 cv2.putText(img, f"M{handedness}: Mao aberta", 
                            (10, 190 + y_offset*i), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                # sem gesto associado, para ter gesto de referência
                 
             if mao_fechada(landmarks):
                 cv2.putText(img, f"M{handedness}: Mao fechada", 
@@ -239,6 +213,3 @@ while True:
 
 cap.release()
 cv2.destroyAllWindows()
-
-## ANOTACOES ##
-# olhar_baixo | olhar_cima | olhar_direita | olhar_esquerda
