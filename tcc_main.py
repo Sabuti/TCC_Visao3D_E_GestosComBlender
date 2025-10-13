@@ -4,13 +4,13 @@ import math
 import socket
 import json
 
-# ============ CONFIGURAÇÃO UDP ============
+# Configuração UDP
 BLENDER_IP = "127.0.0.1"   # IP do Blender (localhost)
 BLENDER_PORT = 5005
 sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
 
-def send_command(cmd_name): # payload=None, value=None
-    msg = {"cmd": cmd_name} # "payload": payload or {}, "value": value
+def send_command(cmd_name): 
+    msg = {"cmd": cmd_name} 
     data = json.dumps(msg).encode("utf-8")
     sock.sendto(data, (BLENDER_IP, BLENDER_PORT))
 
@@ -164,7 +164,7 @@ while True:
 
             direcao = eh_indicador_medio(landmarks, face_center)
             if direcao and direcao != "Centro":
-                cv2.putText(img, f"M{handedness}: Indicador+Médio: {direcao}", 
+                cv2.putText(img, f"M{handedness}: Indicador+Medio: {direcao}", 
                            (10, 130 + y_offset*i), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
                 gesture = f"olhar_{direcao.lower()}"
 
