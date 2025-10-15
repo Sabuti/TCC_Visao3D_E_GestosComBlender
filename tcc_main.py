@@ -158,8 +158,8 @@ while True:
             # --- Testes de gestos ---
             y_offset = 30
             if eh_mindinho(landmarks):
-                cv2.putText(img, f"M{handedness}: Mindinho", (10, 100 + y_offset*i), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
+                cv2.putText(img, f"M{handedness}: Mindinho", 
+                            (10, 100 + y_offset*i), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
                 gesture = "mudar_gravidade"
 
             direcao = eh_indicador_medio(landmarks, face_center)

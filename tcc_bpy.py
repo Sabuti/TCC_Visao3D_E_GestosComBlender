@@ -1,139 +1,117 @@
 import bpy
 import socket
 import json
+import mathutils
+import threading
+import time
+import queue
 
-# Objeto que será manipulado
-objeto = None
+PORT = 5005
+vel_base = 0.6
+vel_corrente = vel_base
+gravidade_ativa = True
+chao_y = 0.8   # altura do "chão"
 
-# Ação para iniciar o sistema e encontrar o objeto
-def start_system():
-    global objeto
-    
-    # Encontra o primeiro objeto que não seja 'Camera' ou 'Light'
-    for obj in bpy.data.objects:
-        if obj.name != "Camera" and obj.name != "Light":
-            print(f"Objeto encontrado: {obj.name}")
-            objeto = obj
-            break
+ultimo_comando_tempo = {}
+DEBOUNCE_RAPIDO = 0.15
+DEBOUNCE_LENTO = 1.0
+comandos_pendentes = queue.Queue()
 
-    if objeto:
+def agora(): return time.time()
+
+def pode_executar(cmd):
+    t = agora()
+    ultimo = ultimo_comando_tempo.get(cmd, 0)
+    intervalo = DEBOUNCE_RAPIDO if cmd.startswith("olhar_") or cmd.startswith("mover_") else DEBOUNCE_LENTO
+    if t - ultimo >= intervalo:
+        ultimo_comando_tempo[cmd] = t
         return True
-    else:
-        print("Nenhum objeto para manipular encontrado.")
-        return False
+    return False
 
-# Função que executa os comandos recebidos
-def executar_comando(comando):
-    global objeto
-    if not objeto:
-        print("Erro: Objeto de manipulação não definido.")
-        return
-    
-    cmd = comando.get("cmd")
-    payload = comando.get("payload", {})
+def get_camera():
+    return bpy.data.objects.get("Camera")
 
-    if cmd == "girar_z":
-        objeto.rotation_euler[2] += float(comando["value"])
-    elif cmd == "mover_x":
-        objeto.location.x += float(comando["value"])
-    elif cmd == "zoom_in":
-        cam = bpy.context.scene.camera.data
-        cam.lens *= 1.2 # pra mais zoom
-    elif cmd == "zoom_out":
-        cam = bpy.context.scene.camera.data
-        cam.lens *= 0.8 # pra menos zoom
-    elif cmd == "teste_mudar_modo":
-        bpy.ops.object.editmode_toggle() # TEM QUE TESTAR AINDA
-    elif cmd == "abrir_menu":
-        # ---- Abre a Toolbar na tela "Modeling" ----
-        layout_screen = bpy.data.screens.get("Modeling")
-        if not layout_screen:
-            print("Tela 'Modeling' não encontrada.")
-            return
+def mover_frente():
+    cam = get_camera()
+    if not cam: return
+    frente = cam.matrix_world.to_quaternion() @ mathutils.Vector((0, 0, -1))
+    cam.location += frente * vel_corrente
 
-        # Encontra a primeira área do tipo 3D View
-        area_3d = next((a for a in layout_screen.areas if a.type == 'VIEW_3D'), None)
-        if not area_3d:
-            print("Nenhuma 3D View encontrada na tela 'Modeling'.")
-            return
+def olhar_delta(dx, dy):
+    cam = get_camera()
+    if not cam: return
+    e = cam.rotation_euler
+    e.x += dy
+    e.z += dx
 
-        # Procura a região TOOLS (toolbar lateral)
-        region_tools = next((r for r in area_3d.regions if r.type == 'TOOLS'), None)
-        if not region_tools:
-            print("Nenhuma região TOOLS encontrada na área 3D.")
-            return
+def alternar_velocidade():
+    global vel_corrente
+    vel_corrente = vel_base * 2.5 if vel_corrente == vel_base else vel_base
+    print("Velocidade:", vel_corrente)
 
-        # Força a largura da toolbar para torná-la visível
-        #region_tools.width = 300 # reclamou, então comentei
-        #region_tools.tag_redraw()
-        print("Toolbar aberta na tela 'Layout'.")
+def alternar_gravidade():
+    global gravidade_ativa
+    gravidade_ativa = not gravidade_ativa
+    print("Gravidade:", "Ativa" if gravidade_ativa else "Desativada")
 
-# Operador Modal para ouvir o socket UDP sem travar a interface
-class SocketListenerModalOperator(bpy.types.Operator):
-    bl_idname = "object.socket_listener"
-    bl_label = "Blender Socket Listener"
-    
-    _timer = None
-    _socket = None
+def aplicar_gravidade():
+    if not gravidade_ativa: return
+    cam = get_camera()
+    if not cam: return
+    if cam.location.z > chao_y:
+        cam.location.z -= 0.05  # força da gravidade
 
-    def modal(self, context, event):
-        # O timer é o que fará a checagem a cada 0.1s
-        if event.type == 'TIMER':
-            if self._socket:
-                try:
-                    data, addr = self._socket.recvfrom(1024)
-                    #print(f"Conexão aceita de: {addr}") # para debug
-                    if data:
-                        comando = json.loads(data.decode())
-                        #print("Recebido:", comando) # para debug
-                        executar_comando(comando)
-                except BlockingIOError:
-                    # Nenhuma mensagem nova, continua o loop
-                    pass
-                except Exception as e:
-                    print("Erro ao processar comando:", e)
-        
-        # O operador pode ser finalizado com o 'ESC'
-        if event.type in {'ESC'}:
-            context.window_manager.event_timer_remove(self._timer)
-            if self._socket:
-                self._socket.close()
-            print("Operador de Socket UDP finalizado.")
-            return {'FINISHED'}
+def executar(cmd):
+    if not pode_executar(cmd): return
+    if cmd == "mover_frente": mover_frente()
+    elif cmd == "olhar_direita": olhar_delta(-0.1, 0)
+    elif cmd == "olhar_esquerda": olhar_delta(0.1, 0)
+    elif cmd == "olhar_cima": olhar_delta(0, 0.1)
+    elif cmd == "olhar_baixo": olhar_delta(0, -0.1)
+    elif cmd == "alternar_velocidade": alternar_velocidade()
+    elif cmd == "mudar_gravidade": alternar_gravidade()
 
-        return {'PASS_THROUGH'}
-
-    def invoke(self, context, event):
-        if not start_system():
-            return {'CANCELLED'}
-
-        # Inicia o socket no método invoke
+def processar():
+    while not comandos_pendentes.empty():
+        cmd = comandos_pendentes.get()
         try:
-            self._socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-            self._socket.setblocking(False)
-            self._socket.bind(('0.0.0.0', 5005))
-            print("Servidor UDP do Blender aguardando comandos...")
+            executar(cmd)
         except Exception as e:
-            print(f"Erro ao iniciar o servidor: {e}")
-            return {'CANCELLED'}
-        
-        # Adiciona o timer para chamar o método modal
-        self._timer = context.window_manager.event_timer_add(0.05, window=context.window)
-        context.window_manager.modal_handler_add(self)
-        
-        return {'RUNNING_MODAL'}
+            print("Erro ao executar comando:", e)
+    aplicar_gravidade()
 
-# Funções de registro para o Blender
-def register():
+def _tick():
+    processar()
+    return 0.05
+
+def servidor_udp():
+    sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
-        bpy.utils.unregister_class(SocketListenerModalOperator)
-    except RuntimeError:
-        pass  # Classe ainda não registrada
-    bpy.utils.register_class(SocketListenerModalOperator)
+        sock.bind(("0.0.0.0", PORT))
+    except OSError as e:
+        print("Erro ao abrir porta UDP:", e)
+        return
+    print(f"Servidor UDP escutando em 0.0.0.0:{PORT}")
+    sock.setblocking(False)
+    while True:
+        try:
+            data, _ = sock.recvfrom(1024)
+            comando = json.loads(data.decode())
+            cmd = comando.get("cmd", "")
+            comandos_pendentes.put(cmd)
+        except BlockingIOError:
+            pass
+        except Exception as e:
+            print("Erro no UDP:", e)
+        time.sleep(0.01)
 
-def unregister():
-    bpy.utils.unregister_class(SocketListenerModalOperator)
+wm = bpy.context.window_manager
+if not wm.get("_udp_thread_started"):
+    t = threading.Thread(target=servidor_udp, daemon=True)
+    t.start()
+    wm["_udp_thread_started"] = True
+    print("Servidor UDP iniciado.")
+else:
+    print("Servidor UDP já está rodando.")
 
-register()
-    # Roda Script
-    # bpy.ops.object.socket_listener_modal_operator() (No console do Blender)
+bpy.app.timers.register(_tick, persistent=True)
