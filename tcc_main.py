@@ -1,6 +1,18 @@
 import cv2
 import mediapipe as mp
 import math
+import socket
+import json
+
+# Configuração UDP
+BLENDER_IP = "127.0.0.1"   # IP do Blender (localhost)
+BLENDER_PORT = 5005
+sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+
+def send_command(cmd_name): 
+    msg = {"cmd": cmd_name} 
+    data = json.dumps(msg).encode("utf-8")
+    sock.sendto(data, (BLENDER_IP, BLENDER_PORT))
 
 # Inicialização do MediaPipe
 mp_hands = mp.solutions.hands
@@ -30,20 +42,8 @@ def eh_mindinho(landmarks):
     # Apenas mindinho levantado
     return (not polegar and not indicador and not medio and not anelar and mindinho)
 
-def eh_dedao(landmarks):
-    """Verifica se só o dedão está levantado (apenas ele)"""
-    # Pontos dos dedos
-    polegar = landmarks[4].x < landmarks[3].x if landmarks[4].x < landmarks[0].x else landmarks[4].x > landmarks[3].x
-    indicador = landmarks[8].y < landmarks[6].y
-    medio = landmarks[12].y < landmarks[10].y
-    anelar = landmarks[16].y < landmarks[14].y
-    mindinho = landmarks[20].y < landmarks[18].y
+def eh_indicador_medio(landmarks, face_center): # Verifica se indicador e anelar estão levantados (apenas eles) e aponta direção
     
-    # Apenas dedão levantado
-    return (polegar and not indicador and not medio and not anelar and not mindinho)
-
-def eh_indicador_medio(landmarks, face_center):
-    """Verifica se indicador e anelar estão levantados (apenas eles) e aponta direção"""
     # Verifica quais dedos estão levantados
     polegar = landmarks[4].x < landmarks[3].x if landmarks[4].x < landmarks[0].x else landmarks[4].x > landmarks[3].x
     indicador = landmarks[8].y < landmarks[6].y
@@ -64,7 +64,7 @@ def eh_indicador_medio(landmarks, face_center):
         limiar = 0.05
         
         if abs(dx) > abs(dy):
-            return "Direita" if dx > limiar else "Esquerda" if dx < -limiar else "Centro"
+            return "Esquerda" if dx > limiar else "Direita" if dx < -limiar else "Centro"
         else:
             return "Baixo" if dy > limiar else "Cima" if dy < -limiar else "Centro"
     
@@ -157,19 +157,19 @@ while True:
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
 
             landmarks = handLms.landmark
+            gesture = None
 
             y_offset = 30
             if eh_mindinho(landmarks):
                 cv2.putText(img, f"M{contador_maos}: Mindinho", (10, 100 + y_offset*i), 
                            cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 0), 2)
-            elif eh_dedao(landmarks):
-                cv2.putText(img, f"M{contador_maos}: Dedao", (10, 100 + y_offset*i), 
-                           cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 200, 0), 2)
+                gesture = "mudar_gravidade"
 
             direcao = eh_indicador_medio(landmarks, face_center)
             if direcao and direcao != "Centro":
                 cv2.putText(img, f"M{contador_maos}: Indicador+Anelar: {direcao}", 
                            (10, 130 + y_offset*i), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 200, 255), 2)
+                gesture = f"olhar_{direcao.lower()}"
 
             pos_indicador = posicao_indicador(landmarks)
             if pos_indicador:
@@ -183,12 +183,20 @@ while True:
             if mao_aberta(landmarks):
                 cv2.putText(img, f"M{contador_maos}: Mao aberta", 
                            (10, 190 + y_offset*i), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2)
+                # sem gesto associado, para ter gesto de referência/descanso
+
             if mao_fechada(landmarks):
                 cv2.putText(img, f"M{contador_maos}: Mao fechada", 
                            (10, 220 + y_offset*i), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 0, 255), 2)
+                gesture = "mover_frente"
+
             if eh_indicador_mindinho(landmarks):
                 cv2.putText(img, f"M{contador_maos}: Indicador+Mindinho", 
                            (10, 250 + y_offset*i), cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 0, 255), 2)
+                gesture = "alternar_velocidade"
+
+            if gesture:
+                send_command(gesture)
 
     cv2.putText(img, f"Maos detectadas: {contador_maos}/2", (10, 30), 
                 cv2.FONT_HERSHEY_SIMPLEX, 0.7, (255, 255, 255), 2)
