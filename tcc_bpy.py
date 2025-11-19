@@ -10,7 +10,7 @@ PORT = 5005
 vel_base = 0.6
 vel_corrente = vel_base
 gravidade_ativa = True
-chao_y = 0.8   # altura do "chão"
+chao_y = 1   # altura do "chão" no mapa https://sketchfab.com/3d-models/invasion-map-miniroyaleio-89f52d6ee9344cc48060076c222ad40b
 
 ultimo_comando_tempo = {}
 DEBOUNCE_RAPIDO = 0.15
@@ -31,11 +31,60 @@ def pode_executar(cmd):
 def get_camera():
     return bpy.data.objects.get("Camera")
 
+# ============================================================
+# === COLISÃO DA CÂMERA (raycast + tolerância de distância) ===
+# ============================================================
+
+DISTANCIA_MIN = 0.5   # distância mínima antes da colisão
+
+def pode_mover(nova_pos):
+    cam = get_camera()
+    if not cam:
+        return True
+
+    origem = cam.location
+    direcao = (nova_pos - origem)
+    dist = direcao.length
+
+    if dist < 0.0001:
+        return True
+
+    direcao = direcao.normalized()
+
+    # depsgraph correto
+    depsgraph = bpy.context.evaluated_depsgraph_get()
+
+    # === Chamada correta para Blender 3.x / 4.x ===
+    result, hit_loc, normal, index, obj, matrix = bpy.context.scene.ray_cast(
+        depsgraph,
+        origin=origem,
+        direction=direcao,
+        distance=dist + DISTANCIA_MIN
+    )
+
+    if result:
+        return False
+
+    return True
+
+# =============================
+# === MOVIMENTO COM COLISÃO ===
+# =============================
+
 def mover_frente():
     cam = get_camera()
-    if not cam: return
+    if not cam: 
+        return
+
     frente = cam.matrix_world.to_quaternion() @ mathutils.Vector((0, 0, -1))
-    cam.location += frente * vel_corrente
+    nova_pos = cam.location + frente * vel_corrente
+
+    # --- Teste de colisão ---
+    if pode_mover(nova_pos):
+        cam.location = nova_pos
+    # else:
+    #     print("Movimento bloqueado por colisão.")
+
 
 def olhar_delta(dx, dy):
     cam = get_camera()
@@ -59,7 +108,12 @@ def aplicar_gravidade():
     cam = get_camera()
     if not cam: return
     if cam.location.z > chao_y:
-        cam.location.z -= 0.05  # força da gravidade
+        nova_pos = cam.location.copy()
+        nova_pos.z -= 0.05
+
+        if pode_mover(nova_pos):  # gravidade também respeita colisão
+            cam.location = nova_pos
+
 
 def executar(cmd):
     if not pode_executar(cmd): return
